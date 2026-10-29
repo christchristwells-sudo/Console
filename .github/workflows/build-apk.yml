@@ -1,0 +1,71 @@
+name: Build APK Wells Pad
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Extraire le site depuis wells-pad-netlify.zip
+        run: |
+          set -e
+          test -f wells-pad-netlify.zip || { echo "wells-pad-netlify.zip est introuvable à la racine du dépôt"; exit 1; }
+          rm -rf www && mkdir www
+          unzip -o wells-pad-netlify.zip -d www
+          test -f www/index.html || { echo "index.html manquant dans le zip"; exit 1; }
+          ls -la www
+
+      - name: Installer Capacitor
+        run: |
+          set -e
+          npm init -y
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npx cap init "Wells Pad" "com.wells.pad" --web-dir www
+
+      - name: Créer le projet Android
+        run: |
+          set -e
+          npx cap add android
+          # Verrouiller en portrait : l'application couche elle-même la console
+          sed -i 's/<activity/<activity android:screenOrientation="portrait"/' android/app/src/main/AndroidManifest.xml
+          # Icône de Wells Pad
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p android/app/src/main/res/mipmap-$d
+            cp www/icon-192.png android/app/src/main/res/mipmap-$d/ic_launcher.png
+            cp www/icon-192.png android/app/src/main/res/mipmap-$d/ic_launcher_round.png
+          done
+          npx cap sync android
+
+      - name: Compiler l'APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wells-pad-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
